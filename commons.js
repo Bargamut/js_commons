@@ -1,6 +1,26 @@
+'use strict';
+
 /**
  * Created by bargamut on 01.08.16.
  */
+
+/**
+ * Расширение $.classList.contains
+ *
+ * Проверка наличия более одного класса одновременно
+ *
+ * @param   classes
+ * @returns {boolean}
+ */
+DOMTokenList.prototype.containsMany = function(classes) {
+  var items = classes.split(' ');
+
+  items.forEach(function(item) {
+    if (this.contains(item) == false) return false;
+  }, this);
+
+  return true;
+};
 
 /**
  * Селектор DOM-объектов
@@ -10,7 +30,7 @@
  * @returns {NodeList}  - возвращаем NodeList элементов, удовлетворяющих селектору el
  */
 var $ = function (el, startNode) {
-  startNode = ((typeof(startNode) == 'string') ? $(startNode)[0] : startNode) || document;
+  startNode = (typeof(startNode) == 'string' ? $(startNode)[0] : startNode) || document;
 
   var node = (typeof startNode != 'undefined') ? startNode.querySelectorAll(el) : [];
 
@@ -20,24 +40,27 @@ var $ = function (el, startNode) {
 /**
  * Навешивание обработчика события
  *
- * @param   obj       - объект обытия
- * @param   type      - тип события
- * @param   callback  - что делаем при событии
- * @returns {boolean} - возвращаем статус успеха
+ * @param   obj         - объект обытия
+ * @param   type        - тип события
+ * @param   callback    - что делаем при событии
+ * @param   useCapture  - флаг фазы захвата события
+ *                        (от верхнего к нижнему элементу)
+ * @returns {boolean}   - возвращаем статус успеха
  */
-function addListener(obj, type, callback) {
+function addListener(obj, type, callback, useCapture) {
   if (typeof obj == 'undefined') return false;
 
-  if (typeof obj.length != 'undefined' && obj.length > 1)
-    for (var i = 0; i < obj.length; i++)
-      addListener(obj[i], type, callback);
-  else if (obj.addEventListener) {
-    obj.addEventListener(type, callback, false);
+  useCapture = useCapture || false;
+
+  if (obj.addEventListener) {
+    obj.addEventListener(type, callback, useCapture);
     return true;
   } else if (obj.attachEvent) {
     obj.attachEvent('on' + type, callback);
     return true;
-  }
+  } else if (typeof obj.length != 'undefined' && obj.length > 1)
+    for (var i = 0; i < obj.length; i++)
+      addListener(obj[i], type, callback);
 
   return false;
 }
@@ -128,7 +151,7 @@ function runOnKeys(obj, func) {
       if (Array.isArray(codes[i])) {
 
         // проверим: нажата ли хоть одна из возможных
-        var isPressed = codes[i].some(function(item, i, arr) { return pressed[item]; });
+        var isPressed = codes[i].some(function (item) { return pressed[item]; });
 
         if (!isPressed) return;
       } else if (!pressed[codes[i]]) { return; }
@@ -150,6 +173,54 @@ function runOnKeys(obj, func) {
 }
 
 /**
+ * Загружаем шаблон по AJAX
+ *
+ * @param opts - объект, набор параметров:
+ *    tpl       - url-адрес шаблона
+ *    callback  - функция, вызываемая в случае успешного получения шаблона.
+ *                В неё передаётся полученный DOM-объект, вне DOM-дерева документа.
+ */
+function loadTPL(opts) {
+  var x = GetXmlHttpObject();
+
+  opts.onerr    = opts.onerr ? opts.onerr : function () {  };
+  opts.callback = opts.callback ? opts.callback : function () {};
+
+  x.open('GET', opts.tpl);
+  x.timeout            = 30000;
+  x.ontimeout          = function () {
+    alert('Время ожидания на построение интерфейса вышло! Что-то не так - обратитесь в IT-отдел.');
+  };
+  x.onreadystatechange = function() {
+    if (x.readyState == 4)
+      if (x.status == 200) {
+        var $obj = new DOMParser().parseFromString(x.responseText, 'text/html').body.childNodes;
+
+        if ($obj.length == 1) $obj = $obj[0];
+
+        opts.callback($obj);
+      } else opts.onerr();
+  };
+  x.onerror = function() {};
+  x.send();
+}
+
+/**
+ * Отображаем/скрываем элемент(ы) DOM
+ *
+ * @param $elem - элемент, их массив или NodeList
+ * @param mode  - флаг "show"|"hide"
+ */
+function elemShowHide($elem, mode) {
+  if (!$elem) return;
+
+  [].forEach.call($elem, function($item) {
+    if (mode == 'show') $item.classList.remove('hide');
+    else                $item.classList.add('hide');
+  });
+}
+
+/**
  * Подгружаем при необходимости и
  * активируем javascript, полученный в содержимом ответа AJAX
  *
@@ -164,38 +235,16 @@ function activateScripts(container) {
     if (scripts[s].src != '') {
       var xmlhttp = GetXmlHttpObject();
 
-      xmlhttp.open('GET', scripts[s].src, false);
+      xmlhttp.open('GET', scripts[s].src);
+      xmlhttp.onreadystatechange = function() {
+        // TODO: перерписать под document.createElement('script')
+      };
       xmlhttp.send();
-
-      if (xmlhttp.status == 200) eval(xmlhttp.responseText);
     } else if (scripts[s].innerHTML != '')
       eval(scripts[s].innerHTML);
 
     scripts[s].parentNode.removeChild(scripts[s]);
   }
-}
-
-/**
- * Является ли элемент частью класса
- *
- * @param elem
- * @param classname
- * @returns {boolean}
- */
-function isElemOfClass(elem, classname) {
-  if (!elem || !classname) return false;
-  if (!(elem instanceof Object)) return false;
-  if (elem.className === undefined) return false;
-
-  var checkClasses = classname.split(' '),
-      elemClasses  = elem.className.split(' ');
-
-  for (var i = 0; i < checkClasses.length; i++) {
-    if (checkClasses[i] == '') continue;
-    if (elemClasses.indexOf(checkClasses[i]) == -1) return false;
-  }
-
-  return true;
 }
 
 /**
@@ -218,10 +267,10 @@ function makeDraggable($elem, handler) {
      * @param e - объект события
      * @private
      */
-    function _startDrag(e) {
+    var _startDrag = function(e) {
       e = e || window.event;
 
-      $elem.style.zIndex = 1000;
+      makeActiveDialog($elem);
 
       if ($elem.parentNode.tagName != 'BODY') document.body.appendChild($elem);
 
@@ -232,8 +281,6 @@ function makeDraggable($elem, handler) {
       // Высчитываем положение курсора относительно элемента
       var shiftX = e.pageX - coords.left,
           shiftY = e.pageY - coords.top;
-
-      if ($elem.parentNode.tagName != 'BODY') document.body.appendChild($elem);
 
       /**
        * Передвигаем захваченный для перетаскивания элемент
@@ -253,7 +300,6 @@ function makeDraggable($elem, handler) {
       /**
        * "Сбрасываем" захваченный для перетаскивания элемент
        *
-       * @param e - объект события
        * @private
        */
       function _dropElem() {
@@ -265,7 +311,7 @@ function makeDraggable($elem, handler) {
 
       addListener([document, $target], 'mousemove', _moveAt);
       addListener([document, $target], 'mouseup', _dropElem);
-    }
+    };
 
     // Если определён хендлер, то таскаем за него
     var $handler = $elem.querySelector(handler) || $elem;
@@ -296,5 +342,191 @@ function getCoords($elem) {
   return {
     top : box.top + scrollTop - clientTop,
     left: box.left + scrollLeft - clientLeft
+  };
+}
+
+/**
+ * Форматирование разницы даты
+ *
+ * @param   date  - дата (объект / втрока / число миллисекунд)
+ * @returns {*}   - вывод форматированной даты
+ */
+function formatDate(date) {
+  date = makeDateObj(date);
+
+  if (null == date) return;
+
+  return {
+    year      : checkNumZero(date.getYear()),
+    month     : checkNumZero(date.getMonth() + 1),
+    date      : checkNumZero(date.getDate()),
+    hours     : checkNumZero(date.getHours()),
+    minutes   : checkNumZero(date.getMinutes()),
+    monthNames: ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'],
+    getDate   : function (monthname, full) { return this.date + ' ' + (this.getMonth(monthname)) + (full ? ' ' + this.year : ''); },
+    getTime   : function () { return this.hours + ':' + this.minutes; },
+    getMonth  : function (monthname) { return monthname ? this.monthNames[date.getMonth()] : this.month; }
+  };
+}
+
+/**
+ * Проверяем разность дат
+ *
+ * @param   from      - дата начала отсчёта
+ * @param   to        - дата конца отсчёта
+ * @returns {number}  - возвращаем статус:
+ *                        1 - сегодня или в будущем
+ *                        2 - вчера
+ *                        3 - раньше, чем вчера
+ *                        4 - год назад и более
+ */
+function getDiffDateStatus(from, to) {
+  from = makeDateObj(from);
+  to   = makeDateObj(to);
+
+  if (null == from || null == to) return;
+
+  from.setHours(0);
+  from.setMinutes(0);
+  from.setMilliseconds(0);
+
+  var timeAgo = {
+        year: from - 31536000000,
+        day : from - 86400000
+      },
+      // сегодня или в будущем
+      status  = 1;
+
+  // раньше, чем год назад
+  if (timeAgo.year > to)      status = 4;
+  // раньше, чем вчера
+  else if (timeAgo.day > to)  status = 3;
+  // вчера
+  else if (from > to)         status = 2;
+  // в будущем
+  //else if (from < to)         status = -1;
+
+  return status;
+}
+
+function getDiffDate(from, to) {
+  var diffStatus = getDiffDateStatus(from, to),
+      frmTime    = formatDate(to),
+      result;
+
+  switch (diffStatus) {
+    case 1:
+      result = frmTime.getTime();
+      break;
+    case 2:
+      result = 'вчера, ' + frmTime.getTime();
+      break;
+    case 3:
+      result = frmTime.getDate(true);
+      break;
+    case 4:
+      result = frmTime.getDate(true, true);
+      break;
+    default :
+      break;
+  }
+
+  return result;
+}
+
+/**
+ * Проверяем, чтобы date был обхектом класса Date()
+ *
+ * @param   date  - дата в строчной форме, в форме кол-ва миллисекунд или объект класса Date()
+ * @returns {*}   - возвращаем объект даты или null
+ */
+function makeDateObj(date) {
+  return (typeof date == 'object') ? date :
+         (typeof date == 'string' || typeof date == 'number') ? new Date(date) : null;
+}
+
+/**
+ * Делаем окно диалога активным
+ *
+ * Остальные деактивируем
+ *
+ * @param $obj - объект контейнера диалога
+ */
+function makeActiveDialog($obj) {
+  for (var i = 0; i < $('.chat').length; i++)
+    $('.chat')[i].classList.remove('active');
+
+  $obj.classList.add('active');
+  $('textarea', $obj).focus();
+}
+
+/**
+ * Проверка на написание чисел с лидирующим нулём
+ *
+ * @param val   - значение
+ * @param rate  - порядок числа, до которого приписываем нули.
+ *                Необязательный аргумент, по умолчанию - 10
+ * @returns {*} - форматированный вывод
+ */
+function checkNumZero(val, rate) {
+  rate = rate || 10;
+
+  if ((val / rate) < 1) { val = '0' + val; }
+
+  return val;
+}
+
+/**
+ * Проверяем используется ли Flash
+ *
+ * @returns {boolean}
+ * @constructor
+ */
+function checkFlashUsed() {
+  var Fplugin;
+
+  try {
+    Fplugin = navigator.plugins["Shockwave Flash"];
+  } catch (e) {
+    try {
+      Fplugin = new ActiveXObject("ShockwaveFlash.ShockwaveFlash.7");
+    } catch (err) {
+      try {
+        Fplugin = new ActiveXObject("ShockwaveFlash.ShockwaveFlash.6");
+      } catch (err2) { }
+    }
+  }
+
+  return (typeof Fplugin != 'undefined');
+}
+
+/**
+ * Получение информации о браузере
+ * @param ua - значение UserAgent браузера
+ * @returns {{browser: (*|string), version: (*|string)}}
+ */
+function getBrowserInfo(ua) {
+  ua = ua.toLowerCase();
+
+  var match = /(opr)[ \/]([\w.]+)/.exec(ua) ||
+      /(chrome)[ \/]([\w.]+)/.exec(ua) ||
+      /(safari)[ \/]([\w.]+)/.exec(ua) ||
+      /(seamonkey)[ \/]([\w.]+)/.exec(ua) ||
+      /(firefox)[ \/]([\w.]+)/.exec(ua) ||
+      /(webkit)[ \/]([\w.]+)/.exec(ua) ||
+      /(opera)(?:.*version|)[ \/]([\w.]+)/.exec(ua) ||
+      /(msie) ([\w.]+)/.exec(ua) ||
+      (ua.indexOf('compatible') < 0 && /(mozilla)(?:.*? rv:([\w.]+)|)/.exec(ua)) ||
+      [];
+
+  if (ua.indexOf('trident/7.0') >= 0 && match[1] == 'mozilla') {
+    match[1] = 'msie';
+  } else if (match[1] == 'opr') {
+    match[1] = 'opera';
+  }
+
+  return {
+    browser: match[1] || '',
+    version: match[2] || '0'
   };
 }
